@@ -9,14 +9,17 @@ import {
   UploadedFile,
   UseInterceptors,
   BadRequestException,
+  UploadedFiles,
+  Query,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { RegisterUserDto } from './dto/register-user.dto';
 import { LoginUserDto } from './dto/login-user.dto';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { storage } from './oss';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { storage, chunkStorage } from './oss';
+import { ChunkHelper, ChunkMetadata } from './chunk.helper';
 import * as path from 'path';
 
 @Controller('user')
@@ -71,6 +74,164 @@ export class UserController {
       size: file.size,
       mimetype: file.mimetype,
     };
+  }
+
+  @Post('upload/large-file')
+  @UseInterceptors(
+    FilesInterceptor('files', 20, {
+      storage: chunkStorage,
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB limit per chunk
+      fileFilter: (req, file, cb) => {
+        const extName = path.extname(file.originalname).toLowerCase();
+        if (extName === '.jpg' || extName === '.jpeg' || extName === '.png') {
+          cb(null, true);
+        } else {
+          cb(
+            new BadRequestException(
+              'Only .jpg, .jpeg, and .png files are allowed',
+            ),
+            false,
+          );
+        }
+      },
+    }),
+  )
+  async uploadLargeFile(
+    @UploadedFiles() files: Array<Express.Multer.File>,
+    @Body()
+    body: {
+      name?: string;
+      chunkIndex?: string;
+      totalChunks?: string;
+      fileName?: string;
+      fileSize?: string;
+      uploadId?: string;
+    },
+  ) {
+    if (!files || files.length === 0) {
+      throw new BadRequestException('No files uploaded');
+    }
+
+    const chunkIndex = parseInt(body.chunkIndex || '0');
+    const totalChunks = parseInt(body.totalChunks || '1');
+    const fileName = body.fileName || files[0].originalname;
+    const fileSize = parseInt(body.fileSize || '0');
+    const baseName = body.name || 'default';
+    const uploadId = body.uploadId || 'default';
+    const folderName = `${baseName}-${uploadId}`;
+
+    console.log('Chunk upload:', {
+      fileName,
+      chunkIndex,
+      totalChunks,
+      folderName,
+      uploadedChunks: files.length,
+    });
+
+    // Check if all chunks have been uploaded
+    const allChunksUploaded = ChunkHelper.areAllChunksUploaded(
+      fileName,
+      totalChunks,
+      folderName,
+    );
+
+    if (allChunksUploaded) {
+      console.log(`All chunks received for ${fileName}, assembling...`);
+
+      try {
+        // Assemble chunks into final file
+        const metadata: ChunkMetadata = {
+          chunkIndex,
+          totalChunks,
+          fileName,
+          fileSize,
+          folderName,
+        };
+
+        const result = await ChunkHelper.assembleChunks(metadata);
+
+        // Clean up chunk files
+        ChunkHelper.cleanupChunks(fileName, folderName);
+
+        const fileUrl = `/uploads/completed/${result.fileName}`;
+
+        return {
+          message: 'File uploaded and assembled successfully',
+          status: 'completed',
+          fileName: result.fileName,
+          originalFileName: fileName,
+          url: fileUrl,
+          path: result.filePath,
+          totalChunks,
+          size: fileSize,
+        };
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Unknown error';
+        throw new BadRequestException(
+          `Failed to assemble file: ${errorMessage}`,
+        );
+      }
+    }
+
+    // Return progress for intermediate chunks
+    return {
+      message: `Chunk ${chunkIndex + 1}/${totalChunks} uploaded successfully`,
+      status: 'uploading',
+      chunkIndex,
+      totalChunks,
+      fileName,
+      progress: Math.round(((chunkIndex + 1) / totalChunks) * 100),
+    };
+  }
+
+  @Get('merge/file')
+  async mergeFile(
+    @Query()
+    query: {
+      fileName?: string;
+      folderName?: string;
+    },
+  ) {
+    if (!query.fileName || !query.folderName) {
+      throw new BadRequestException(
+        'fileName and folderName are required parameters',
+      );
+    }
+
+    const { fileName, folderName } = query;
+
+    try {
+      // Extract metadata from query or use defaults
+      const metadata: ChunkMetadata = {
+        fileName,
+        folderName,
+        chunkIndex: 0,
+        totalChunks: 0,
+        fileSize: 0,
+      };
+
+      // Assemble chunks into final file
+      const result = await ChunkHelper.assembleChunks(metadata);
+
+      // Clean up chunk files
+      ChunkHelper.cleanupChunks(fileName, folderName);
+
+      const fileUrl = `/uploads/completed/${result.fileName}`;
+
+      return {
+        message: 'File merged successfully',
+        status: 'completed',
+        fileName: result.fileName,
+        originalFileName: fileName,
+        url: fileUrl,
+        path: result.filePath,
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      throw new BadRequestException(`Failed to merge file: ${errorMessage}`);
+    }
   }
 
   @Post()

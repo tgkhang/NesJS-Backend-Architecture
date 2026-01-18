@@ -1,0 +1,161 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Chunked File Upload</title>
+  </head>
+  <body>
+    <h1>Upload Large Files (with Chunking)</h1>
+
+    <div>
+      <label>Session/Folder Name: </label>
+      <input
+        type="text"
+        id="folderName"
+        value="session-1"
+        placeholder="e.g., session-1, user-123"
+      />
+      <small>(Base name for organizing uploads)</small>
+    </div>
+
+    <div>
+      <label>Chunk Size (bytes): </label>
+      <input type="number" id="chunkSize" value="1048576" min="102400" />
+      <small>(1MB = 1048576 bytes)</small>
+    </div>
+
+    <div>
+      <label>Select Files: </label>
+      <input type="file" id="fileInput" multiple accept=".jpg,.jpeg,.png" />
+    </div>
+
+    <div>
+      <button id="uploadBtn" disabled>Upload Files with Chunking</button>
+    </div>
+
+    <div id="progress" style="display: none">
+      <h3>Upload Progress</h3>
+      <p id="status">Preparing...</p>
+      <progress id="progressBar" max="100" value="0"></progress>
+      <span id="percent">0%</span>
+      <p id="chunkInfo"></p>
+    </div>
+
+    <div id="result"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script>
+      const fileInput = document.getElementById('fileInput');
+      const uploadBtn = document.getElementById('uploadBtn');
+      const chunkSizeInput = document.getElementById('chunkSize');
+      const folderNameInput = document.getElementById('folderName');
+      const progressDiv = document.getElementById('progress');
+      const progressBar = document.getElementById('progressBar');
+      const percent = document.getElementById('percent');
+      const status = document.getElementById('status');
+      const chunkInfo = document.getElementById('chunkInfo');
+      const result = document.getElementById('result');
+
+      let selectedFiles = [];
+
+      fileInput.addEventListener('change', (e) => {
+        selectedFiles = Array.from(e.target.files);
+        uploadBtn.disabled = selectedFiles.length === 0;
+      });
+
+      uploadBtn.addEventListener('click', async () => {
+        if (selectedFiles.length === 0) return;
+
+        const chunkSize = parseInt(chunkSizeInput.value);
+        const folderName = folderNameInput.value || 'session-1';
+
+        // Generate unique upload ID for this session
+        const uploadId = Date.now() + '-' + Math.round(Math.random() * 1e9);
+
+        uploadBtn.disabled = true;
+        progressDiv.style.display = 'block';
+        result.innerHTML = '';
+
+        try {
+          for (let i = 0; i < selectedFiles.length; i++) {
+            const file = selectedFiles[i];
+            status.textContent = `Uploading file ${i + 1} of ${selectedFiles.length}: ${file.name}`;
+            await uploadFileInChunks(file, chunkSize, folderName, uploadId);
+          }
+
+          result.innerHTML =
+            '<h3 style="color:green;">✓ All files uploaded successfully!</h3>';
+        } catch (error) {
+          console.error('Upload error:', error);
+          result.innerHTML = `<h3 style="color:red;">✗ Upload failed: ${error.message}</h3>`;
+        } finally {
+          uploadBtn.disabled = false;
+        }
+      });
+
+      async function uploadFileInChunks(file, chunkSize, folderName, uploadId) {
+        const totalChunks = Math.ceil(file.size / chunkSize);
+
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+          const start = chunkIndex * chunkSize;
+          const end = Math.min(start + chunkSize, file.size);
+          const chunk = file.slice(start, end);
+
+          // Create a new file from chunk
+          const chunkFile = new File([chunk], file.name, { type: file.type });
+
+          const formData = new FormData();
+          formData.append('files', chunkFile);
+          formData.append('chunkIndex', chunkIndex);
+          formData.append('totalChunks', totalChunks);
+          formData.append('fileName', file.name);
+          formData.append('fileSize', file.size);
+          formData.append('name', folderName);
+          formData.append('uploadId', uploadId);
+
+          status.textContent = `Uploading ${file.name} - Chunk ${chunkIndex + 1} of ${totalChunks}`;
+          chunkInfo.textContent = `Chunk ${chunkIndex + 1}/${totalChunks} (${formatBytes(chunk.size)})`;
+
+          try {
+            const response = await axios.post(
+              'http://localhost:3000/user/upload/large-file',
+              formData,
+              {
+                headers: {
+                  'Content-Type': 'multipart/form-data',
+                },
+              },
+            );
+
+            console.log(`Chunk ${chunkIndex + 1} response:`, response.data);
+
+            // Update progress
+            const progress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+            progressBar.value = progress;
+            percent.textContent = progress + '%';
+
+            // If this is the last chunk and file is complete, show the final URL
+            if (response.data.status === 'completed') {
+              console.log('File assembled successfully!');
+              console.log('File URL:', response.data.url);
+              status.textContent = `Completed: ${file.name} - Available at ${response.data.url}`;
+            }
+          } catch (error) {
+            throw new Error(`Chunk ${chunkIndex + 1} failed: ${error.message}`);
+          }
+        }
+
+        status.textContent = `Completed: ${file.name}`;
+      }
+
+      function formatBytes(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return (
+          Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
+        );
+      }
+    </script>
+  </body>
+</html>

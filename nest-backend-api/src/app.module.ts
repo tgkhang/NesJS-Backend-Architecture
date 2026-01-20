@@ -1,3 +1,4 @@
+import { MyLoggerDev } from './logger/my.logger.dev';
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -9,6 +10,6 @@ import { DbModule } from './db/db.module';
 @Module({
   imports: [TicketModule, OrderModule, UserModule, DbModule],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, MyLoggerDev],
 })
 export class AppModule {}

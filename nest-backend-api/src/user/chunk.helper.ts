@@ -27,6 +27,8 @@ export class ChunkHelper {
     files.forEach((file) => {
       const match = file.match(chunkPattern);
       if (match) {
+        // Extract chunk index and update maxChunkIndex
+        // ex: file.part.00003 -> 3
         const index = parseInt(match[1], 10);
         if (index > maxChunkIndex) {
           maxChunkIndex = index;
@@ -56,7 +58,7 @@ export class ChunkHelper {
       }
     }
 
-    // Ensure final directory exists
+    // Ensure final directory exists, if not, create it
     if (!fs.existsSync(finalDir)) {
       fs.mkdirSync(finalDir, { recursive: true });
     }
@@ -105,9 +107,8 @@ export class ChunkHelper {
   static cleanupChunks(fileName: string, folderName: string): void {
     const chunkDir = path.join(process.cwd(), 'uploads', 'chunks', folderName);
 
-    if (!fs.existsSync(chunkDir)) {
-      return;
-    }
+    // If chunk directory doesn't exist, nothing to clean
+    if (!fs.existsSync(chunkDir)) return;
 
     // Find and delete all chunk files for this fileName
     const files = fs.readdirSync(chunkDir);
@@ -116,15 +117,14 @@ export class ChunkHelper {
     files.forEach((file) => {
       if (chunkPattern.test(file)) {
         const filePath = path.join(chunkDir, file);
+        // unlinkSync is a function that deletes a file
         fs.unlinkSync(filePath);
       }
     });
 
     // Remove folder if empty
     const remainingFiles = fs.readdirSync(chunkDir);
-    if (remainingFiles.length === 0) {
-      fs.rmdirSync(chunkDir);
-    }
+    if (remainingFiles.length === 0) fs.rmdirSync(chunkDir);
   }
 
   /**
@@ -137,18 +137,14 @@ export class ChunkHelper {
   ): boolean {
     const chunkDir = path.join(process.cwd(), 'uploads', 'chunks', folderName);
 
-    if (!fs.existsSync(chunkDir)) {
-      return false;
-    }
+    // If chunk directory doesn't exist, no chunks uploaded
+    if (!fs.existsSync(chunkDir)) return false;
 
     // Check if all expected chunks exist
     for (let i = 0; i < totalChunks; i++) {
       const chunkFileName = `${fileName}.part.${String(i).padStart(5, '0')}`;
       const chunkPath = path.join(chunkDir, chunkFileName);
-
-      if (!fs.existsSync(chunkPath)) {
-        return false;
-      }
+      if (!fs.existsSync(chunkPath)) return false;
     }
 
     return true;

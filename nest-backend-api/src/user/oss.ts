@@ -3,62 +3,28 @@ import * as multer from 'multer';
 import * as fs from 'fs';
 import * as path from 'path';
 
-interface ChunkUploadBody {
-  name?: string;
-  fileName?: string;
-  chunkIndex?: string;
-  totalChunks?: string;
-  fileSize?: string;
-  uploadId?: string;
-}
-
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
+  destination: function (_req, _file, cb) {
     const uploadDir = path.join(process.cwd(), 'uploads', 'avatar');
-    try {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    } catch (error) {
-      console.error('Error creating upload directory:', error);
-    }
+    fs.mkdirSync(uploadDir, { recursive: true });
     cb(null, uploadDir);
   },
-  filename: function (req, file, cb) {
-    const uniqueSuffix =
-      Date.now() +
-      '-' +
-      Math.round(Math.random() * 1e9) +
-      '-' +
-      file.originalname;
+  filename: function (_req, file, cb) {
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}-${file.originalname}`;
     cb(null, uniqueSuffix);
   },
 });
 
-// Storage configuration for chunked uploads
+// Storage for chunked uploads - uploads to temp, controller organizes them
 const chunkStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    // Use the 'uploadId' field from body to create unique folder for each upload session
-    const body = req.body as ChunkUploadBody;
-    const baseName: string = body?.name || 'default';
-    const uploadId: string = body?.uploadId || 'default';
-
-    // Create folder with format: baseName-uploadId
-    const folderName = `${baseName}-${uploadId}`;
-
-    const uploadDir = path.join(process.cwd(), 'uploads', 'chunks', folderName);
-    try {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    } catch (error) {
-      console.error('Error creating chunk directory:', error);
-    }
+  destination: function (_req, _file, cb) {
+    const uploadDir = path.join(process.cwd(), 'uploads', 'chunks', 'temp');
+    fs.mkdirSync(uploadDir, { recursive: true });
     cb(null, uploadDir);
   },
-  filename: function (req, file, cb) {
-    // Create ordered chunk filename: originalname.part.{chunkIndex}
-    const body = req.body as ChunkUploadBody;
-    const fileName: string = body?.fileName || file.originalname;
-    const chunkIndex: string = body?.chunkIndex || '0';
-    const chunkFilename = `${fileName}.part.${String(chunkIndex).padStart(5, '0')}`;
-    cb(null, chunkFilename);
+  filename: function (_req, file, cb) {
+    const uniqueFilename = `${Date.now()}-${Math.random().toString(36).substring(7)}-${file.originalname}`;
+    cb(null, uniqueFilename);
   },
 });
 

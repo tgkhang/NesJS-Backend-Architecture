@@ -18,7 +18,7 @@ async function bootstrap() {
     bufferLogs: true,
   });
 
-  app.useLogger(app.get(MyLoggerDev));
+  //app.useLogger(app.get(MyLoggerDev));
   app.useGlobalPipes(new ValidationPipe());
 
   // Enable CORS

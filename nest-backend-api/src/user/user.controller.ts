@@ -21,6 +21,7 @@ import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { storage, chunkStorage } from './oss';
 import { ChunkHelper, ChunkMetadata } from './chunk.helper';
 import * as path from 'path';
+import * as fs from 'fs';
 
 @Controller('user')
 export class UserController {
@@ -63,7 +64,6 @@ export class UserController {
     }
     console.log('Uploaded file:', file);
 
-    // Generate accessible URL
     const fileUrl = `/uploads/avatar/${file.filename}`;
 
     return {
@@ -116,19 +116,19 @@ export class UserController {
     const totalChunks = parseInt(body.totalChunks || '1');
     const fileName = body.fileName || files[0].originalname;
     const fileSize = parseInt(body.fileSize || '0');
-    const baseName = body.name || 'default';
-    const uploadId = body.uploadId || 'default';
-    const folderName = `${baseName}-${uploadId}`;
+    const folderName = `${body.name || 'default'}-${body.uploadId || 'default'}`;
 
     console.log('Chunk upload:', {
       fileName,
       chunkIndex,
       totalChunks,
       folderName,
-      uploadedChunks: files.length,
     });
 
-    // Check if all chunks have been uploaded
+    // Move temp file to proper location with correct chunk name
+    this.moveChunkToTarget(files[0], fileName, chunkIndex, folderName);
+
+    // Check if all chunks uploaded
     const allChunksUploaded = ChunkHelper.areAllChunksUploaded(
       fileName,
       totalChunks,
@@ -138,40 +138,29 @@ export class UserController {
     if (allChunksUploaded) {
       console.log(`All chunks received for ${fileName}, assembling...`);
 
-      try {
-        // Assemble chunks into final file
-        const metadata: ChunkMetadata = {
-          chunkIndex,
-          totalChunks,
-          fileName,
-          fileSize,
-          folderName,
-        };
+      const metadata: ChunkMetadata = {
+        chunkIndex,
+        totalChunks,
+        fileName,
+        fileSize,
+        folderName,
+      };
 
-        const result = await ChunkHelper.assembleChunks(metadata);
+      const result = await ChunkHelper.assembleChunks(metadata);
 
-        // Clean up chunk files
-        ChunkHelper.cleanupChunks(fileName, folderName);
+      // Clean up chunk files (commented out to keep chunks)
+      // ChunkHelper.cleanupChunks(fileName, folderName);
 
-        const fileUrl = `/uploads/completed/${result.fileName}`;
-
-        return {
-          message: 'File uploaded and assembled successfully',
-          status: 'completed',
-          fileName: result.fileName,
-          originalFileName: fileName,
-          url: fileUrl,
-          path: result.filePath,
-          totalChunks,
-          size: fileSize,
-        };
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
-        throw new BadRequestException(
-          `Failed to assemble file: ${errorMessage}`,
-        );
-      }
+      return {
+        message: 'File uploaded and assembled successfully',
+        status: 'completed',
+        fileName: result.fileName,
+        originalFileName: fileName,
+        url: `/uploads/completed/${result.fileName}`,
+        path: result.filePath,
+        totalChunks,
+        size: fileSize,
+      };
     }
 
     // Return progress for intermediate chunks
@@ -199,39 +188,27 @@ export class UserController {
       );
     }
 
-    const { fileName, folderName } = query;
+    const metadata: ChunkMetadata = {
+      fileName: query.fileName,
+      folderName: query.folderName,
+      chunkIndex: 0,
+      totalChunks: 0,
+      fileSize: 0,
+    };
 
-    try {
-      // Extract metadata from query or use defaults
-      const metadata: ChunkMetadata = {
-        fileName,
-        folderName,
-        chunkIndex: 0,
-        totalChunks: 0,
-        fileSize: 0,
-      };
+    const result = await ChunkHelper.assembleChunks(metadata);
 
-      // Assemble chunks into final file
-      const result = await ChunkHelper.assembleChunks(metadata);
+    // Clean up chunk files (commented out to keep chunks)
+    // ChunkHelper.cleanupChunks(query.fileName, query.folderName);
 
-      // Clean up chunk files
-      ChunkHelper.cleanupChunks(fileName, folderName);
-
-      const fileUrl = `/uploads/completed/${result.fileName}`;
-
-      return {
-        message: 'File merged successfully',
-        status: 'completed',
-        fileName: result.fileName,
-        originalFileName: fileName,
-        url: fileUrl,
-        path: result.filePath,
-      };
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(`Failed to merge file: ${errorMessage}`);
-    }
+    return {
+      message: 'File merged successfully',
+      status: 'completed',
+      fileName: result.fileName,
+      originalFileName: query.fileName,
+      url: `/uploads/completed/${result.fileName}`,
+      path: result.filePath,
+    };
   }
 
   @Post()
@@ -257,5 +234,22 @@ export class UserController {
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.userService.remove(+id);
+  }
+
+  // Helper method to move chunk from temp to target directory
+  private moveChunkToTarget(
+    file: Express.Multer.File,
+    fileName: string,
+    chunkIndex: number,
+    folderName: string,
+  ): void {
+    const targetDir = path.join(process.cwd(), 'uploads', 'chunks', folderName);
+    const chunkFilename = `${fileName}.part.${String(chunkIndex).padStart(5, '0')}`;
+    const targetPath = path.join(targetDir, chunkFilename);
+
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.renameSync(file.path, targetPath);
+
+    console.log(`Moved chunk ${chunkIndex} to: ${targetPath}`);
   }
 }

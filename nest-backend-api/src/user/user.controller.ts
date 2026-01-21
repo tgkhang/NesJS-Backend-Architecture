@@ -211,6 +211,11 @@ export class UserController {
     };
   }
 
+  @Post('log')
+  log(@Body() body) {
+    console.log('Log body:', body);
+  }
+
   @Post()
   create(@Body() createUserDto: CreateUserDto) {
     return this.userService.create(createUserDto);
